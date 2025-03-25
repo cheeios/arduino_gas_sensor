@@ -1,0 +1,136 @@
+#include <LiquidCrystal_I2C.h>
+#include <SoftwareSerial.h>
+
+// Instantiate the I2C LCD: adjust address (0x27) and LCD size (16,2) as needed
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Instantiate SoftwareSerial for SIM800L: RX pin=9, TX pin=10
+SoftwareSerial mySerial(9, 10);
+
+// I/O pins
+int buzzer = 13;
+int GASA0 = A0;
+
+// Flag to avoid spamming SMS messages
+bool dangerSent = false;
+
+void setup() {
+  // Initialize LCD. Depending on your library, it may be lcd.init(); lcd.backlight();
+  lcd.begin();                  
+  lcd.backlight();
+
+  // Initialize serial for SIM800L and the Arduino Serial Monitor
+  mySerial.begin(9600);  
+  Serial.begin(9600);    
+
+  // Buzzer pin as OUTPUT
+  pinMode(buzzer, OUTPUT);
+
+  // Basic startup message on LCD
+  lcd.setCursor(3, 0);
+  lcd.print("Welcome to"); 
+  lcd.setCursor(1, 1);
+  lcd.print("Infinite Xpro"); 
+  delay(5000);     
+
+  // Test SIM800L with some basic AT commands
+  sendATCommand("AT", 2000);       // Check basic connectivity
+  sendATCommand("AT+CSQ", 2000);   // Check signal quality
+  sendATCommand("AT+CREG?", 2000); // Check network registration status
+
+  // Set SIM800L in SMS Text Mode
+  sendATCommand("AT+CMGF=1", 2000); 
+}
+
+void loop() {
+  // Read raw sensor value from analog pin
+  int raw = analogRead(GASA0);
+
+  // Simple conversion (subtract offset, then divide).
+  // Clamp the result so it doesn't go below zero.
+  int gasvalue = (raw < 50) ? 0 : (raw - 50) / 10;
+
+  // Print "GAS Level: XX%"
+  lcd.setCursor(0, 0);
+  lcd.print("GAS Level:");
+  lcd.setCursor(10, 0);
+  lcd.print(gasvalue);
+  lcd.setCursor(12, 0);
+  lcd.print("% ");
+
+  // Check threshold
+  if (gasvalue >= 10) {
+    // Display DANGER on LCD
+    lcd.setCursor(0, 1);
+    lcd.print("DANGER    ");
+    
+    // Sound the buzzer briefly
+    tone(buzzer, 1000, 200);
+
+    // Send an SMS only if it has not been sent yet during this "danger" event
+    if (!dangerSent) {
+      SendTextMessage();
+      dangerSent = true;
+    }
+  } else {
+    // If below threshold, display NORMAL
+    lcd.setCursor(0, 1);
+    lcd.print("NORMAL    ");
+    noTone(buzzer);
+
+    // Reset the dangerSent flag so we can send another SMS next time we cross the threshold
+    dangerSent = false;
+  }
+
+  delay(500);
+  // Clear the display for the next reading
+  lcd.clear();
+}
+
+/**
+ * SendTextMessage() 
+ * Sends a text message "Gas Leaking!" to the specified phone number.
+ */
+void SendTextMessage() {
+  // Re-send to ensure the SIM800L is in SMS text mode
+  sendATCommand("AT+CMGF=1", 2000);  
+
+  // Prepare the SMS by specifying the phone number (replace with your own)
+  sendATCommand("AT+CMGS=\"+639776383720\"", 2000);
+
+  // Wait for the ">" prompt, then send the message text
+  delay(1000);
+  mySerial.println("Gas Leaking!");  
+  delay(500);
+
+  // Ctrl+Z character (ASCII 26) to actually send the message
+  mySerial.println((char)26);
+  delay(1000);
+
+  // Print any remaining response from SIM800L to Serial Monitor for debug
+  while (mySerial.available()) {
+    Serial.write(mySerial.read());
+  }
+}
+
+/**
+ * sendATCommand(String command, int delayTime)
+ * 
+ * Sends an AT command via the SIM800L SoftwareSerial connection,
+ * waits for a specified delay, and prints the response to the Serial Monitor.
+ */
+void sendATCommand(String command, int delayTime) {
+  // Send the AT command
+  mySerial.println(command);  
+  delay(delayTime);
+
+  // Print the command for clarity in Serial Monitor
+  Serial.print("SENT: ");
+  Serial.println(command);
+
+  // Read and print any available response from the SIM800L
+  while (mySerial.available()) {
+    Serial.write(mySerial.read());
+  }
+  Serial.println(); // New line for clarity
+}
